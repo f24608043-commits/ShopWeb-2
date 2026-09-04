@@ -1,0 +1,301 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+}
+
+enum ProductType {
+  SIMPLE
+  VARIABLE
+}
+
+enum InputType {
+  DROPDOWN
+  RADIO
+  CHECKBOX
+  COLOR_PICKER
+  BUTTON_GROUP
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+/// User model – Customer and Admin accounts
+model User {
+  id           String   @id @default(uuid())
+  username     String?  @unique
+  name         String?
+  email        String   @unique
+  passwordHash String?  // bcrypt hash, null for OAuth users
+  phone        String?
+  address      String?
+  city         String?
+  province     String?
+  postalCode   String?
+  role         Role     @default(CUSTOMER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orders       Order[]
+  reviews      Review[]
+}
+
+/// Category model – Supports nested tree via parent/child self-reference
+model Category {
+  id                 String     @id @default(uuid())
+  name               String
+  slug               String     @unique
+  description        String?
+  heroBannerImageUrl String?
+  parentCategoryId   String?
+  parentCategory     Category?  @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id], onDelete: SetNull)
+  subcategories      Category[] @relation("CategoryHierarchy")
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  products           Product[]
+}
+
+/// Brand model
+model Brand {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  logoUrl   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products  Product[]
+}
+
+/// Product model
+model Product {
+  id               String        @id @default(uuid())
+  name             String
+  slug             String        @unique
+  description      String?
+  shortDescription String?
+  basePrice        Decimal       @default(0)
+  originalPrice    Decimal?
+  brandId          String?
+  brand            Brand?        @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  categoryId       String?
+  category         Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  featured         Boolean       @default(false)
+  stock            Int?          // null for VARIABLE products (stock lives on variations)
+  productType      ProductType   @default(SIMPLE)
+  globalFormId     String?
+  globalForm       GlobalForm?   @relation(fields: [globalFormId], references: [id], onDelete: SetNull)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  images           ProductImage[]
+  options          ProductOption[]
+  variations       ProductVariation[]
+  reviews          Review[]
+  dealProducts     DealProduct[]
+}
+
+/// Images per product
+model ProductImage {
+  id        String   @id @default(uuid())
+  url       String
+  altText   String?
+  order     Int      @default(0)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+/// Reusable Global Form for options
+model GlobalForm {
+  id          String          @id @default(uuid())
+  name        String
+  description String?
+  active      Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  options     ProductOption[]
+  products    Product[]
+}
+
+/// Product Options (e.g. Size, Color, Fabric)
+model ProductOption {
+  id           String               @id @default(uuid())
+  name         String
+  inputType    InputType            @default(DROPDOWN)
+  productId    String?
+  product      Product?             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  globalFormId String?
+  globalForm   GlobalForm?          @relation(fields: [globalFormId], references: [id], onDelete: Cascade)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  values       ProductOptionValue[]
+}
+
+/// Option Values (e.g. 5ft, Velvet, Black)
+model ProductOptionValue {
+  id               String                  @id @default(uuid())
+  value            String
+  priceAdjustment  Decimal                 @default(0)
+  optionId         String
+  option           ProductOption           @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  variationValues  ProductVariationValue[]
+}
+
+/// Concrete Product Variation (e.g. Size: 5ft + Fabric: Velvet)
+model ProductVariation {
+  id        String                  @id @default(uuid())
+  sku       String?                 @unique
+  price     Decimal                 @default(0)
+  stock     Int                     @default(0)
+  productId String
+  product   Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
+
+  values    ProductVariationValue[]
+}
+
+/// Junction table linking variation to individual option values
+model ProductVariationValue {
+  id            String             @id @default(uuid())
+  variationId   String
+  variation     ProductVariation   @relation(fields: [variationId], references: [id], onDelete: Cascade)
+  optionValueId String
+  optionValue   ProductOptionValue @relation(fields: [optionValueId], references: [id], onDelete: Cascade)
+}
+
+/// Orders
+model Order {
+  id            String      @id @default(uuid())
+  userId        String?
+  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  status        OrderStatus @default(PENDING)
+  total         Decimal     @default(0)
+  subtotal      Decimal     @default(0)
+  discount      Decimal     @default(0)
+  customerName  String
+  customerEmail String
+  phone         String?
+  address       String?
+  city          String?
+  province      String?
+  postalCode    String?
+  couponId      String?
+  coupon        Coupon?     @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  items         OrderItem[]
+}
+
+/// Immutable Order Item Snapshot
+model OrderItem {
+  id              String   @id @default(uuid())
+  orderId         String
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId       String
+  productName     String
+  productSlug     String
+  variationId     String?
+  variationSku    String?
+  quantity        Int
+  unitPrice       Decimal
+  totalPrice      Decimal
+  selectedOptions Json?
+}
+
+/// Coupons
+model Coupon {
+  id            String       @id @default(uuid())
+  code          String       @unique
+  discountType  DiscountType
+  discountValue Decimal
+  minOrderValue Decimal?     @default(0)
+  usageLimit    Int?
+  usedCount     Int          @default(0)
+  expiresAt     DateTime?
+  active        Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  orders        Order[]
+}
+
+/// Reviews
+model Review {
+  id        String   @id @default(uuid())
+  rating    Int      @default(0)
+  comment   String?
+  approved  Boolean  @default(false)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Promotional Deals
+model Deal {
+  id          String        @id @default(uuid())
+  title       String
+  description String?
+  dealPrice   Decimal
+  active      Boolean       @default(true)
+  expiresAt   DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  products    DealProduct[]
+}
+
+/// Deal Junction Table
+model DealProduct {
+  id        String  @id @default(uuid())
+  dealId    String
+  deal      Deal    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+/// Newsletter Subscribers
+model Subscriber {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String?
+  subscribedAt DateTime @default(now())
+}
+
+/// Contact Form Submissions
+model ContactMessage {
+  id        String   @id @default(uuid())
+  name      String
+  email     String
+  subject   String
+  message   String
+  createdAt DateTime @default(now())
+}
