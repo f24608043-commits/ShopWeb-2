@@ -1,28 +1,31 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/lib/admin-auth';
 import { dealSchema } from '@/lib/validations/engagement';
 
 // GET /api/deals - Fetch active bundle promotional deals
 export async function GET() {
   try {
-    const deals = await prisma.deal.findMany({
-      where: {
-        active: true,
-      },
-      include: {
-        products: {
-          include: {
-            product: {
-              include: {
-                images: { take: 1 },
-              },
-            },
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const supabase = await createClient();
+    const { data: deals, error } = await supabase
+      .from('deals')
+      .select(`
+        *,
+        products:deal_products(
+          *,
+          product:products(
+            *,
+            images:product_images(limit: 1)
+          )
+        )
+      `)
+      .eq('active', true)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Supabase query error:', error);
+      return NextResponse.json({ error: 'Failed to fetch deals' }, { status: 500 });
+    }
 
     return NextResponse.json(deals);
   } catch (error) {
@@ -39,6 +42,7 @@ export async function POST(req: Request) {
       return auth.response;
     }
 
+    const supabase = await createClient();
     const body = await req.json();
     const validatedData = dealSchema.safeParse(body);
 
@@ -51,23 +55,53 @@ export async function POST(req: Request) {
 
     const { title, description, dealPrice, active, expiresAt, productIds } = validatedData.data;
 
-    const newDeal = await prisma.deal.create({
-      data: {
+    const { data: newDeal, error: insertError } = await supabase
+      .from('deals')
+      .insert({
         title,
         description,
-        dealPrice,
+        deal_price: dealPrice,
         active,
-        expiresAt: expiresAt ? new Date(expiresAt) : null,
-        products: {
-          create: productIds.map((pid) => ({ productId: pid })),
-        },
-      },
-      include: {
-        products: { include: { product: true } },
-      },
-    });
+        expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
+      })
+      .select()
+      .single();
 
-    return NextResponse.json(newDeal, { status: 201 });
+    if (insertError) {
+      console.error('Supabase insert error:', insertError);
+      return NextResponse.json({ error: 'Failed to create deal' }, { status: 500 });
+    }
+
+    // Create deal products
+    if (productIds && productIds.length > 0) {
+      const dealProductInserts = productIds.map((productId) => ({
+        deal_id: newDeal.id,
+        product_id: productId,
+      }));
+
+      const { error: productsError } = await supabase
+        .from('deal_products')
+        .insert(dealProductInserts);
+
+      if (productsError) {
+        console.error('Failed to create deal products:', productsError);
+      }
+    }
+
+    // Fetch complete deal with products
+    const { data: completeDeal } = await supabase
+      .from('deals')
+      .select(`
+        *,
+        products:deal_products(
+          *,
+          product:products(*)
+        )
+      `)
+      .eq('id', newDeal.id)
+      .single();
+
+    return NextResponse.json(completeDeal, { status: 201 });
   } catch (error) {
     console.error('POST /api/deals error:', error);
     return NextResponse.json({ error: 'Failed to create deal' }, { status: 500 });

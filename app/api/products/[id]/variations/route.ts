@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 
 // GET /api/products/[id]/variations - Fetch variations for a specific product
 export async function GET(
@@ -8,24 +8,27 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    const supabase = await createClient();
 
-    const variations = await prisma.productVariation.findMany({
-      where: { productId: id },
-      include: {
-        values: {
-          include: {
-            optionValue: {
-              include: {
-                option: true,
-              },
-            },
-          },
-        },
-      },
-      orderBy: {
-        createdAt: 'asc',
-      },
-    });
+    const { data: variations, error } = await supabase
+      .from('product_variations')
+      .select(`
+        *,
+        values:product_variation_values(
+          *,
+          option_value:product_option_values(
+            *,
+            option:product_options(*)
+          )
+        )
+      `)
+      .eq('product_id', id)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('Supabase query error:', error);
+      return NextResponse.json({ error: 'Failed to fetch product variations' }, { status: 500 });
+    }
 
     return NextResponse.json(variations);
   } catch (error) {

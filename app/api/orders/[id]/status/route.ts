@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/lib/admin-auth';
 import { updateOrderStatusSchema } from '@/lib/validations/checkout';
 
@@ -15,6 +15,7 @@ export async function PUT(
     }
 
     const { id } = await params;
+    const supabase = await createClient();
     const body = await req.json();
     const validatedData = updateOrderStatusSchema.safeParse(body);
 
@@ -27,11 +28,20 @@ export async function PUT(
 
     const { status } = validatedData.data;
 
-    const updatedOrder = await prisma.order.update({
-      where: { id },
-      data: { status },
-      include: { items: true },
-    });
+    const { data: updatedOrder, error } = await supabase
+      .from('orders')
+      .update({ status })
+      .eq('id', id)
+      .select(`
+        *,
+        items:order_items(*)
+      `)
+      .single();
+
+    if (error) {
+      console.error('Supabase update error:', error);
+      return NextResponse.json({ error: 'Failed to update order status' }, { status: 500 });
+    }
 
     return NextResponse.json({
       message: `Order status updated to ${status}`,

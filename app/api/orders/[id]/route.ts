@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { prisma } from '@/lib/prisma';
-import { authOptions } from '@/lib/auth';
+import { createClient } from '@/lib/supabase/server';
 
 // GET /api/orders/[id] - Fetch single order details
 export async function GET(
@@ -9,25 +7,36 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
     const { id } = await params;
 
-    const order = await prisma.order.findUnique({
-      where: { id },
-      include: {
-        items: true,
-        coupon: { select: { code: true, discountType: true, discountValue: true } },
-      },
-    });
+    const { data: order } = await supabase
+      .from('orders')
+      .select(`
+        *,
+        items:order_items(*),
+        coupon:coupons(code, discount_type, discount_value)
+      `)
+      .eq('id', id)
+      .single();
 
     if (!order) {
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
 
+    // Check if user is admin
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user?.id)
+      .single();
+
+    const isAdmin = profile?.role === 'ADMIN';
+
     // Guest orders or owner or admin can view
-    const isOwner = session?.user?.id === order.userId;
-    const isAdmin = session?.user?.role === 'ADMIN';
-    const isGuestOrder = order.userId === null;
+    const isOwner = user?.id === order.user_id;
+    const isGuestOrder = order.user_id === null;
 
     if (!isGuestOrder && !isOwner && !isAdmin) {
       return NextResponse.json({ error: 'Unauthorized to view this order' }, { status: 403 });

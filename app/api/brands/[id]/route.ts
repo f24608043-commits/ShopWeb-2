@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/lib/admin-auth';
 import { brandSchema } from '@/lib/validations/category-brand';
 
@@ -10,14 +10,16 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const brand = await prisma.brand.findUnique({
-      where: { id },
-      include: {
-        _count: {
-          select: { products: true },
-        },
-      },
-    });
+    const supabase = await createClient();
+    
+    const { data: brand } = await supabase
+      .from('brands')
+      .select(`
+        *,
+        products:products(count)
+      `)
+      .eq('id', id)
+      .single();
 
     if (!brand) {
       return NextResponse.json({ error: 'Brand not found' }, { status: 404 });
@@ -42,6 +44,7 @@ export async function PUT(
     }
 
     const { id } = await params;
+    const supabase = await createClient();
     const body = await req.json();
     const validatedData = brandSchema.safeParse(body);
 
@@ -52,14 +55,15 @@ export async function PUT(
       );
     }
 
-    const { name, slug } = validatedData.data;
+    const { name, slug, logoUrl } = validatedData.data;
 
-    const existingSlug = await prisma.brand.findFirst({
-      where: {
-        slug,
-        NOT: { id },
-      },
-    });
+    // Check slug collision with other brands
+    const { data: existingSlug } = await supabase
+      .from('brands')
+      .select('id')
+      .eq('slug', slug)
+      .neq('id', id)
+      .single();
 
     if (existingSlug) {
       return NextResponse.json(
@@ -68,10 +72,17 @@ export async function PUT(
       );
     }
 
-    const updatedBrand = await prisma.brand.update({
-      where: { id },
-      data: { name, slug },
-    });
+    const { data: updatedBrand, error } = await supabase
+      .from('brands')
+      .update({ name, slug, logo_url: logoUrl || null })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase update error:', error);
+      return NextResponse.json({ error: 'Failed to update brand' }, { status: 500 });
+    }
 
     return NextResponse.json(updatedBrand);
   } catch (error) {
@@ -92,10 +103,17 @@ export async function DELETE(
     }
 
     const { id } = await params;
+    const supabase = await createClient();
 
-    await prisma.brand.delete({
-      where: { id },
-    });
+    const { error } = await supabase
+      .from('brands')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Supabase delete error:', error);
+      return NextResponse.json({ error: 'Failed to delete brand' }, { status: 500 });
+    }
 
     return NextResponse.json({ message: 'Brand deleted successfully' });
   } catch (error) {

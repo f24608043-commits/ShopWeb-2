@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/lib/admin-auth';
 import { couponSchema } from '@/lib/validations/coupon-cart';
 
@@ -11,9 +11,16 @@ export async function GET() {
       return auth.response;
     }
 
-    const coupons = await prisma.coupon.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
+    const supabase = await createClient();
+    const { data: coupons, error } = await supabase
+      .from('coupons')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Supabase query error:', error);
+      return NextResponse.json({ error: 'Failed to fetch coupons' }, { status: 500 });
+    }
 
     return NextResponse.json(coupons);
   } catch (error) {
@@ -30,6 +37,7 @@ export async function POST(req: Request) {
       return auth.response;
     }
 
+    const supabase = await createClient();
     const body = await req.json();
     const validatedData = couponSchema.safeParse(body);
 
@@ -43,25 +51,34 @@ export async function POST(req: Request) {
     const { code, discountType, discountValue, minOrderValue, usageLimit, expiresAt, active } = validatedData.data;
 
     // Check unique code
-    const existingCoupon = await prisma.coupon.findUnique({
-      where: { code: code.toUpperCase() },
-    });
+    const { data: existingCoupon } = await supabase
+      .from('coupons')
+      .select('id')
+      .eq('code', code.toUpperCase())
+      .single();
 
     if (existingCoupon) {
       return NextResponse.json({ error: 'A coupon with this code already exists.' }, { status: 409 });
     }
 
-    const newCoupon = await prisma.coupon.create({
-      data: {
+    const { data: newCoupon, error } = await supabase
+      .from('coupons')
+      .insert({
         code: code.toUpperCase(),
-        discountType,
-        discountValue,
-        minOrderValue: minOrderValue || 0,
-        usageLimit: usageLimit || null,
-        expiresAt: expiresAt ? new Date(expiresAt) : null,
+        discount_type: discountType,
+        discount_value: discountValue,
+        min_order_value: minOrderValue || 0,
+        usage_limit: usageLimit || null,
+        expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
         active,
-      },
-    });
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase insert error:', error);
+      return NextResponse.json({ error: 'Failed to create coupon' }, { status: 500 });
+    }
 
     return NextResponse.json(newCoupon, { status: 201 });
   } catch (error) {

@@ -1,17 +1,20 @@
 import React from 'react';
 import Link from 'next/link';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 
 export default async function OrderConfirmationPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const supabase = await createClient();
 
-  const order = await prisma.order.findUnique({
-    where: { id },
-    include: {
-      items: true,
-      coupon: true,
-    },
-  });
+  const { data: order } = await supabase
+    .from('orders')
+    .select(`
+      *,
+      items:order_items(*),
+      coupon:coupons(*)
+    `)
+    .eq('id', id)
+    .single();
 
   if (!order) {
     return (
@@ -33,7 +36,7 @@ export default async function OrderConfirmationPage({ params }: { params: Promis
         <span className="text-5xl block">🎉</span>
         <h1 className="text-3xl font-black text-emerald-900">Order Confirmed!</h1>
         <p className="text-xs text-emerald-700 max-w-md mx-auto">
-          Thank you, <span className="font-bold">{order.customerName}</span>. Your order has been placed successfully and is being prepared for dispatch.
+          Thank you, <span className="font-bold">{order.customer_name}</span>. Your order has been placed successfully and is being prepared for dispatch.
         </p>
         <div className="inline-block bg-white px-4 py-1.5 rounded-full text-xs font-mono font-bold text-gray-700 border border-emerald-300">
           Order ID: {order.id}
@@ -45,7 +48,7 @@ export default async function OrderConfirmationPage({ params }: { params: Promis
         <div className="flex justify-between items-center border-b border-gray-100 pb-4 text-xs">
           <div>
             <h2 className="font-bold text-gray-900 text-base">Invoice Details</h2>
-            <p className="text-gray-500">Date: {new Date(order.createdAt).toLocaleDateString()}</p>
+            <p className="text-gray-500">Date: {new Date(order.created_at).toLocaleDateString()}</p>
           </div>
           <span className="px-3 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-full uppercase">
             Status: {order.status}
@@ -56,14 +59,14 @@ export default async function OrderConfirmationPage({ params }: { params: Promis
         <div className="grid grid-cols-2 gap-4 text-xs bg-gray-50 p-4 rounded-xl">
           <div>
             <span className="font-bold text-gray-700 block mb-1">Customer Info</span>
-            <p className="text-gray-900 font-medium">{order.customerName}</p>
-            <p className="text-gray-500">{order.customerEmail}</p>
+            <p className="text-gray-900 font-medium">{order.customer_name}</p>
+            <p className="text-gray-500">{order.customer_email}</p>
             <p className="text-gray-500">{order.phone}</p>
           </div>
           <div>
             <span className="font-bold text-gray-700 block mb-1">Delivery Address</span>
             <p className="text-gray-900 font-medium">{order.address}</p>
-            <p className="text-gray-500">{order.city}, {order.province} {order.postalCode}</p>
+            <p className="text-gray-500">{order.city}, {order.province} {order.postal_code}</p>
           </div>
         </div>
 
@@ -71,22 +74,21 @@ export default async function OrderConfirmationPage({ params }: { params: Promis
         <div className="space-y-3">
           <h3 className="font-bold text-xs text-gray-900 uppercase tracking-wider">Purchased Items</h3>
           <div className="divide-y divide-gray-100">
-            {order.items.map((item) => (
+            {order.items?.map((item: any) => (
               <div key={item.id} className="py-3 text-xs flex justify-between items-center">
                 <div>
-                  <span className="font-bold text-gray-900 block">{item.productName}</span>
-                  {item.selectedOptions && (
+                  <span className="font-bold text-gray-900 block">{item.product_name}</span>
+                  {item.selected_options && (
                     <span className="text-[11px] text-amber-700 font-medium">
-                      {(Array.isArray(item.selectedOptions)
-                        ? (item.selectedOptions as any[])
+                      {(Array.isArray(item.selected_options)
+                        ? (item.selected_options as any[])
                         : []
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
                       ).map((o: any) => `${o.option}: ${o.value}`).join(', ')}
                     </span>
                   )}
-                  <span className="text-gray-400 block">Qty: {item.quantity} × Rs. {Number(item.unitPrice).toLocaleString()}</span>
+                  <span className="text-gray-400 block">Qty: {item.quantity} × Rs. {Number(item.unit_price).toLocaleString()}</span>
                 </div>
-                <span className="font-black text-gray-900">Rs. {Number(item.totalPrice).toLocaleString()}</span>
+                <span className="font-black text-gray-900">Rs. {Number(item.total_price).toLocaleString()}</span>
               </div>
             ))}
           </div>

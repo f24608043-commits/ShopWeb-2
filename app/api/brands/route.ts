@@ -1,21 +1,20 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/lib/admin-auth';
 import { brandSchema } from '@/lib/validations/category-brand';
 
 // GET /api/brands - Public listing of brands
 export async function GET() {
   try {
-    const brands = await prisma.brand.findMany({
-      include: {
-        _count: {
-          select: { products: true },
-        },
-      },
-      orderBy: {
-        name: 'asc',
-      },
-    });
+    const supabase = await createClient();
+    
+    const { data: brands } = await supabase
+      .from('brands')
+      .select(`
+        *,
+        products:products(count)
+      `)
+      .order('name', { ascending: true });
 
     return NextResponse.json(brands);
   } catch (error) {
@@ -32,6 +31,7 @@ export async function POST(req: Request) {
       return auth.response;
     }
 
+    const supabase = await createClient();
     const body = await req.json();
     const validatedData = brandSchema.safeParse(body);
 
@@ -44,9 +44,12 @@ export async function POST(req: Request) {
 
     const { name, slug, logoUrl } = validatedData.data;
 
-    const existingBrand = await prisma.brand.findUnique({
-      where: { slug },
-    });
+    // Check for existing slug
+    const { data: existingBrand } = await supabase
+      .from('brands')
+      .select('id')
+      .eq('slug', slug)
+      .single();
 
     if (existingBrand) {
       return NextResponse.json(
@@ -55,9 +58,16 @@ export async function POST(req: Request) {
       );
     }
 
-    const newBrand = await prisma.brand.create({
-      data: { name, slug, logoUrl: logoUrl || null },
-    });
+    const { data: newBrand, error } = await supabase
+      .from('brands')
+      .insert({ name, slug, logo_url: logoUrl || null })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase insert error:', error);
+      return NextResponse.json({ error: 'Failed to create brand' }, { status: 500 });
+    }
 
     return NextResponse.json(newBrand, { status: 201 });
   } catch (error) {

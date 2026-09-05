@@ -1,28 +1,32 @@
 import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 import { ProductCard } from '@/components/product/product-card';
 
 export const revalidate = 60; // SSR with 60s revalidation
 
 export default async function HomePage() {
+  const supabase = await createClient();
+  
   // Fetch featured products, categories, and promotional deals from database
   const [featuredProducts, categories] = await Promise.all([
-    prisma.product.findMany({
-      where: { featured: true },
-      include: {
-        images: { orderBy: { order: 'asc' } },
-        category: true,
-        brand: true,
-        reviews: { where: { approved: true }, select: { rating: true } },
-      },
-      take: 6,
-    }),
-    prisma.category.findMany({
-      where: { parentCategoryId: null },
-      take: 4,
-    }),
+    supabase
+      .from('products')
+      .select(`
+        *,
+        images:product_images(order),
+        category:categories(*),
+        brand:brands(*),
+        reviews:reviews(rating)
+      `)
+      .eq('featured', true)
+      .limit(6),
+    supabase
+      .from('categories')
+      .select('*')
+      .is('parent_category_id', null)
+      .limit(4),
   ]);
 
   return (
@@ -79,14 +83,14 @@ export default async function HomePage() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {categories.map((cat) => (
+          {categories.data?.map((cat) => (
             <Link
               key={cat.id}
               href={`/shop?category=${cat.slug}`}
               className="group relative h-64 rounded-2xl overflow-hidden shadow-md block bg-neutral-900"
             >
               <Image
-                src={cat.heroBannerImageUrl || 'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?q=80&w=800'}
+                src={cat.hero_banner_image_url || 'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?q=80&w=800'}
                 alt={cat.name}
                 fill
                 className="object-cover group-hover:scale-110 transition-transform duration-500 opacity-70 group-hover:opacity-60"
@@ -118,26 +122,29 @@ export default async function HomePage() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {featuredProducts.map((prod) => (
-            <ProductCard
-              key={prod.id}
-              id={prod.id}
-              name={prod.name}
-              slug={prod.slug}
-              basePrice={Number(prod.basePrice)}
-              originalPrice={prod.originalPrice ? Number(prod.originalPrice) : null}
-              productType={prod.productType}
-              images={prod.images}
-              category={prod.category}
-              brand={prod.brand}
-              averageRating={
-                prod.reviews.length > 0
-                  ? Math.round((prod.reviews.reduce((acc, r) => acc + r.rating, 0) / prod.reviews.length) * 10) / 10
-                  : 5.0
-              }
-              totalReviews={prod.reviews.length || 15}
-            />
-          ))}
+          {featuredProducts.data?.map((prod: any) => {
+            const approvedReviews = prod.reviews?.filter((r: any) => r.approved) || [];
+            return (
+              <ProductCard
+                key={prod.id}
+                id={prod.id}
+                name={prod.name}
+                slug={prod.slug}
+                basePrice={Number(prod.base_price)}
+                originalPrice={prod.original_price ? Number(prod.original_price) : null}
+                productType={prod.product_type}
+                images={prod.images}
+                category={prod.category}
+                brand={prod.brand}
+                averageRating={
+                  approvedReviews.length > 0
+                    ? Math.round((approvedReviews.reduce((acc: number, r: any) => acc + r.rating, 0) / approvedReviews.length) * 10) / 10
+                    : 5.0
+                }
+                totalReviews={approvedReviews.length || 15}
+              />
+            );
+          })}
         </div>
       </section>
 

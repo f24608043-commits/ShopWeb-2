@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/lib/admin-auth';
 import { updateVariationSchema } from '@/lib/validations/global-form';
 
@@ -15,6 +15,7 @@ export async function PUT(
     }
 
     const { variationId } = await params;
+    const supabase = await createClient();
     const body = await req.json();
     const validatedData = updateVariationSchema.safeParse(body);
 
@@ -29,12 +30,12 @@ export async function PUT(
 
     // Check unique SKU collision if updated
     if (sku) {
-      const existingSku = await prisma.productVariation.findFirst({
-        where: {
-          sku,
-          NOT: { id: variationId },
-        },
-      });
+      const { data: existingSku } = await supabase
+        .from('product_variations')
+        .select('id')
+        .eq('sku', sku)
+        .neq('id', variationId)
+        .single();
 
       if (existingSku) {
         return NextResponse.json(
@@ -44,21 +45,27 @@ export async function PUT(
       }
     }
 
-    const updatedVariation = await prisma.productVariation.update({
-      where: { id: variationId },
-      data: {
+    const { data: updatedVariation, error } = await supabase
+      .from('product_variations')
+      .update({
         ...(sku !== undefined && { sku }),
         ...(price !== undefined && { price }),
         ...(stock !== undefined && { stock }),
-      },
-      include: {
-        values: {
-          include: {
-            optionValue: true,
-          },
-        },
-      },
-    });
+      })
+      .eq('id', variationId)
+      .select(`
+        *,
+        values:product_variation_values(
+          *,
+          option_value:product_option_values(*)
+        )
+      `)
+      .single();
+
+    if (error) {
+      console.error('Supabase update error:', error);
+      return NextResponse.json({ error: 'Failed to update variation' }, { status: 500 });
+    }
 
     return NextResponse.json(updatedVariation);
   } catch (error) {

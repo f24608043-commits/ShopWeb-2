@@ -1,31 +1,25 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/lib/admin-auth';
 import { categorySchema } from '@/lib/validations/category-brand';
 
 // GET /api/categories - Public listing of top-level categories & subcategories
 export async function GET() {
   try {
-    const categories = await prisma.category.findMany({
-      where: {
-        parentCategoryId: null, // Fetch root categories
-      },
-      include: {
-        subcategories: {
-          include: {
-            _count: {
-              select: { products: true },
-            },
-          },
-        },
-        _count: {
-          select: { products: true },
-        },
-      },
-      orderBy: {
-        name: 'asc',
-      },
-    });
+    const supabase = await createClient();
+    
+    const { data: categories } = await supabase
+      .from('categories')
+      .select(`
+        *,
+        subcategories:categories(
+          *,
+          products:products(count)
+        ),
+        products:products(count)
+      `)
+      .is('parent_category_id', null)
+      .order('name', { ascending: true });
 
     return NextResponse.json(categories);
   } catch (error) {
@@ -45,6 +39,7 @@ export async function POST(req: Request) {
       return auth.response;
     }
 
+    const supabase = await createClient();
     const body = await req.json();
     const validatedData = categorySchema.safeParse(body);
 
@@ -58,9 +53,11 @@ export async function POST(req: Request) {
     const { name, slug, description, heroBannerImageUrl, parentCategoryId } = validatedData.data;
 
     // Check slug collision
-    const existingCategory = await prisma.category.findUnique({
-      where: { slug },
-    });
+    const { data: existingCategory } = await supabase
+      .from('categories')
+      .select('id')
+      .eq('slug', slug)
+      .single();
 
     if (existingCategory) {
       return NextResponse.json(
@@ -69,18 +66,28 @@ export async function POST(req: Request) {
       );
     }
 
-    const newCategory = await prisma.category.create({
-      data: {
+    const { data: newCategory, error } = await supabase
+      .from('categories')
+      .insert({
         name,
         slug,
         description,
-        heroBannerImageUrl: heroBannerImageUrl || null,
-        parentCategoryId: parentCategoryId || null,
-      },
-      include: {
-        parentCategory: true,
-      },
-    });
+        hero_banner_image_url: heroBannerImageUrl || null,
+        parent_category_id: parentCategoryId || null,
+      })
+      .select(`
+        *,
+        parent:categories(*)
+      `)
+      .single();
+
+    if (error) {
+      console.error('Supabase insert error:', error);
+      return NextResponse.json(
+        { error: 'Failed to create category' },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json(newCategory, { status: 201 });
   } catch (error) {

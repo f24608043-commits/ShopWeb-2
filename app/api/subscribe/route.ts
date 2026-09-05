@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 import { subscribeSchema } from '@/lib/validations/engagement';
 
 // POST /api/subscribe - Join newsletter
 export async function POST(req: Request) {
   try {
+    const supabase = await createClient();
     const body = await req.json();
     const validatedData = subscribeSchema.safeParse(body);
 
@@ -18,9 +19,11 @@ export async function POST(req: Request) {
     const { email, name } = validatedData.data;
 
     // Check duplicate
-    const existing = await prisma.subscriber.findUnique({
-      where: { email },
-    });
+    const { data: existing } = await supabase
+      .from('subscribers')
+      .select('id')
+      .eq('email', email)
+      .single();
 
     if (existing) {
       return NextResponse.json(
@@ -29,9 +32,16 @@ export async function POST(req: Request) {
       );
     }
 
-    const subscriber = await prisma.subscriber.create({
-      data: { email, name },
-    });
+    const { data: subscriber, error } = await supabase
+      .from('subscribers')
+      .insert({ email, name })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase insert error:', error);
+      return NextResponse.json({ error: 'Failed to process newsletter subscription' }, { status: 500 });
+    }
 
     return NextResponse.json(
       { message: 'Thank you for subscribing to our newsletter!', subscriber },

@@ -1,12 +1,8 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { requireAdmin } from '@/lib/admin-auth';
-import { blogSchema } from '@/lib/validations/engagement';
 
 // GET /api/blog - Public listing of published blog posts
 export async function GET() {
   try {
-    const posts = await prisma.contactMessage.findMany; // dummy reference check
     // Fetch blog posts from database (using Subscriber/ContactMessage schema extensions if needed)
     return NextResponse.json([
       {

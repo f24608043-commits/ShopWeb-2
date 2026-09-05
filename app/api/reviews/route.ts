@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { prisma } from '@/lib/prisma';
-import { authOptions } from '@/lib/auth';
+import { createClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/lib/admin-auth';
 import { reviewSchema } from '@/lib/validations/engagement';
 
@@ -13,13 +11,20 @@ export async function GET() {
       return auth.response;
     }
 
-    const reviews = await prisma.review.findMany({
-      include: {
-        product: { select: { name: true, slug: true } },
-        user: { select: { name: true, email: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const supabase = await createClient();
+    const { data: reviews, error } = await supabase
+      .from('reviews')
+      .select(`
+        *,
+        product:products(name, slug),
+        user:profiles(name, email)
+      `)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Supabase query error:', error);
+      return NextResponse.json({ error: 'Failed to fetch reviews' }, { status: 500 });
+    }
 
     return NextResponse.json(reviews);
   } catch (error) {
@@ -31,9 +36,10 @@ export async function GET() {
 // POST /api/reviews - Authenticated Customer submits review
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-    if (!session || !session.user) {
+    if (!user) {
       return NextResponse.json(
         { error: 'Only authenticated users can submit reviews. Please sign in.' },
         { status: 401 }
@@ -53,23 +59,32 @@ export async function POST(req: Request) {
     const { productId, rating, comment } = validatedData.data;
 
     // Check if product exists
-    const product = await prisma.product.findUnique({
-      where: { id: productId },
-    });
+    const { data: product } = await supabase
+      .from('products')
+      .select('id')
+      .eq('id', productId)
+      .single();
 
     if (!product) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 });
     }
 
-    const newReview = await prisma.review.create({
-      data: {
-        productId,
-        userId: session.user.id,
+    const { data: newReview, error } = await supabase
+      .from('reviews')
+      .insert({
+        product_id: productId,
+        user_id: user.id,
         rating,
         comment,
         approved: false, // Requires admin moderation before public display
-      },
-    });
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase insert error:', error);
+      return NextResponse.json({ error: 'Failed to submit review' }, { status: 500 });
+    }
 
     return NextResponse.json(
       {

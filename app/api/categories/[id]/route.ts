@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/lib/admin-auth';
 import { categorySchema } from '@/lib/validations/category-brand';
 
@@ -10,16 +10,18 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const category = await prisma.category.findUnique({
-      where: { id },
-      include: {
-        parentCategory: true,
-        subcategories: true,
-        _count: {
-          select: { products: true },
-        },
-      },
-    });
+    const supabase = await createClient();
+    
+    const { data: category } = await supabase
+      .from('categories')
+      .select(`
+        *,
+        parent:categories(*),
+        subcategories:categories(*),
+        products:products(count)
+      `)
+      .eq('id', id)
+      .single();
 
     if (!category) {
       return NextResponse.json({ error: 'Category not found' }, { status: 404 });
@@ -44,6 +46,7 @@ export async function PUT(
     }
 
     const { id } = await params;
+    const supabase = await createClient();
     const body = await req.json();
     const validatedData = categorySchema.safeParse(body);
 
@@ -57,12 +60,12 @@ export async function PUT(
     const { name, slug, description, heroBannerImageUrl, parentCategoryId } = validatedData.data;
 
     // Check slug collision with other categories
-    const existingSlug = await prisma.category.findFirst({
-      where: {
-        slug,
-        NOT: { id },
-      },
-    });
+    const { data: existingSlug } = await supabase
+      .from('categories')
+      .select('id')
+      .eq('slug', slug)
+      .neq('id', id)
+      .single();
 
     if (existingSlug) {
       return NextResponse.json(
@@ -71,19 +74,26 @@ export async function PUT(
       );
     }
 
-    const updatedCategory = await prisma.category.update({
-      where: { id },
-      data: {
+    const { data: updatedCategory, error } = await supabase
+      .from('categories')
+      .update({
         name,
         slug,
         description,
-        heroBannerImageUrl: heroBannerImageUrl || null,
-        parentCategoryId: parentCategoryId || null,
-      },
-      include: {
-        parentCategory: true,
-      },
-    });
+        hero_banner_image_url: heroBannerImageUrl || null,
+        parent_category_id: parentCategoryId || null,
+      })
+      .eq('id', id)
+      .select(`
+        *,
+        parent:categories(*)
+      `)
+      .single();
+
+    if (error) {
+      console.error('Supabase update error:', error);
+      return NextResponse.json({ error: 'Failed to update category' }, { status: 500 });
+    }
 
     return NextResponse.json(updatedCategory);
   } catch (error) {
@@ -104,10 +114,17 @@ export async function DELETE(
     }
 
     const { id } = await params;
+    const supabase = await createClient();
 
-    await prisma.category.delete({
-      where: { id },
-    });
+    const { error } = await supabase
+      .from('categories')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Supabase delete error:', error);
+      return NextResponse.json({ error: 'Failed to delete category' }, { status: 500 });
+    }
 
     return NextResponse.json({ message: 'Category deleted successfully' });
   } catch (error) {

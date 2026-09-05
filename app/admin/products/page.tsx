@@ -1,18 +1,20 @@
 import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 
 export default async function AdminProductsPage() {
-  const products = await prisma.product.findMany({
-    include: {
-      images: { take: 1 },
-      category: true,
-      brand: true,
-      variations: true,
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+  const supabase = await createClient();
+  const { data: products } = await supabase
+    .from('products')
+    .select(`
+      *,
+      images:product_images(limit: 1),
+      category:categories(*),
+      brand:brands(*),
+      variations:product_variations(*)
+    `)
+    .order('created_at', { ascending: false });
 
   return (
     <div className="space-y-6">
@@ -43,12 +45,12 @@ export default async function AdminProductsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {products.map((p) => (
+            {products?.map((p: any) => (
               <tr key={p.id} className="hover:bg-gray-50">
                 <td className="p-3">
                   <div className="relative w-12 h-12 rounded bg-gray-100 overflow-hidden border">
                     <Image
-                      src={p.images[0]?.url || 'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?q=80&w=400'}
+                      src={p.images?.[0]?.url || 'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?q=80&w=400'}
                       alt={p.name}
                       fill
                       className="object-cover"
@@ -57,17 +59,17 @@ export default async function AdminProductsPage() {
                 </td>
                 <td className="p-3 font-bold text-gray-900">{p.name}</td>
                 <td className="p-3 text-gray-600">{p.category?.name || 'Unassigned'}</td>
-                <td className="p-3 font-black text-gray-900">Rs. {Number(p.basePrice).toLocaleString()}</td>
+                <td className="p-3 font-black text-gray-900">Rs. {Number(p.base_price).toLocaleString()}</td>
                 <td className="p-3">
                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    p.productType === 'VARIABLE' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
+                    p.product_type === 'VARIABLE' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
                   }`}>
-                    {p.productType}
+                    {p.product_type}
                   </span>
                 </td>
                 <td className="p-3">
-                  {p.productType === 'VARIABLE' ? (
-                    <span className="font-bold text-amber-700">{p.variations.length} Variations</span>
+                  {p.product_type === 'VARIABLE' ? (
+                    <span className="font-bold text-amber-700">{p.variations?.length || 0} Variations</span>
                   ) : (
                     <span className="font-bold text-gray-800">{p.stock ?? 0} in stock</span>
                   )}

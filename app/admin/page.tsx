@@ -1,28 +1,30 @@
 import React from 'react';
 import Link from 'next/link';
-import { prisma } from '@/lib/prisma';
+import { createClient } from '@/lib/supabase/server';
 
 export default async function AdminDashboardPage() {
+  const supabase = await createClient();
+  
   // Query total metrics
   const [totalProducts, totalOrders, totalUsers, pendingOrders, recentOrders] = await Promise.all([
-    prisma.product.count(),
-    prisma.order.count(),
-    prisma.user.count(),
-    prisma.order.count({ where: { status: 'PENDING' } }),
-    prisma.order.findMany({
-      take: 5,
-      orderBy: { createdAt: 'desc' },
-      include: { items: true },
-    }),
+    supabase.from('products').select('*', { count: 'exact', head: true }),
+    supabase.from('orders').select('*', { count: 'exact', head: true }),
+    supabase.from('profiles').select('*', { count: 'exact', head: true }),
+    supabase.from('orders').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
+    supabase
+      .from('orders')
+      .select('*, items:order_items(*)')
+      .order('created_at', { ascending: false })
+      .limit(5),
   ]);
 
   // Compute total revenue
-  const completedOrders = await prisma.order.findMany({
-    where: { status: { in: ['SHIPPED', 'DELIVERED'] } },
-    select: { total: true },
-  });
+  const { data: completedOrders } = await supabase
+    .from('orders')
+    .select('total')
+    .in('status', ['SHIPPED', 'DELIVERED']);
 
-  const totalRevenue = completedOrders.reduce((sum, o) => sum + Number(o.total), 0);
+  const totalRevenue = completedOrders?.reduce((sum: number, o: any) => sum + Number(o.total), 0) || 0;
 
   return (
     <div className="space-y-8">
@@ -40,17 +42,17 @@ export default async function AdminDashboardPage() {
 
         <div className="bg-blue-50 border border-blue-200 p-5 rounded-2xl space-y-1">
           <span className="text-xs font-bold text-blue-800 uppercase tracking-wider">Total Orders</span>
-          <div className="text-2xl font-black text-blue-900">{totalOrders}</div>
+          <div className="text-2xl font-black text-blue-900">{totalOrders.count || 0}</div>
         </div>
 
         <div className="bg-emerald-50 border border-emerald-200 p-5 rounded-2xl space-y-1">
           <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Products Catalog</span>
-          <div className="text-2xl font-black text-emerald-900">{totalProducts}</div>
+          <div className="text-2xl font-black text-emerald-900">{totalProducts.count || 0}</div>
         </div>
 
         <div className="bg-purple-50 border border-purple-200 p-5 rounded-2xl space-y-1">
           <span className="text-xs font-bold text-purple-800 uppercase tracking-wider">Pending Orders</span>
-          <div className="text-2xl font-black text-purple-900">{pendingOrders}</div>
+          <div className="text-2xl font-black text-purple-900">{pendingOrders.count || 0}</div>
         </div>
       </div>
 
@@ -91,10 +93,10 @@ export default async function AdminDashboardPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {recentOrders.map((o) => (
+              {recentOrders.data?.map((o: any) => (
                 <tr key={o.id} className="hover:bg-gray-50">
                   <td className="p-3 font-mono font-bold text-gray-900 truncate max-w-32">{o.id}</td>
-                  <td className="p-3 font-medium text-gray-800">{o.customerName}</td>
+                  <td className="p-3 font-medium text-gray-800">{o.customer_name}</td>
                   <td className="p-3 font-black text-gray-900">Rs. {Number(o.total).toLocaleString()}</td>
                   <td className="p-3">
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
@@ -104,7 +106,7 @@ export default async function AdminDashboardPage() {
                       {o.status}
                     </span>
                   </td>
-                  <td className="p-3 text-gray-500">{new Date(o.createdAt).toLocaleDateString()}</td>
+                  <td className="p-3 text-gray-500">{new Date(o.created_at).toLocaleDateString()}</td>
                 </tr>
               ))}
             </tbody>
